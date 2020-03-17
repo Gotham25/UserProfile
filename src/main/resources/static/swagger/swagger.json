@@ -2,8 +2,11 @@
   "openapi": "3.0.0",
   "servers": [
     {
-      "url": "http://user-management-ingress-user-management.apps.us-east-1.starter.openshift-online.com",
-      "description": "Development Server"
+      "url": "http://user-management-user-management.apps.us-east-1.starter.openshift-online.com",
+      "description": "Development Server US East (N. Virginia)"
+    }, {
+      "url": "http://user-management-user-management.apps.us-west-1.starter.openshift-online.com",
+      "description": "Development Server US West (N. Virginia)"
     }
   ],
   "info": {

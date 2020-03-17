@@ -1,9 +1,28 @@
 package com.paddyseedexpert.userprofile.service;
 
-import java.security.InvalidAlgorithmParameterException;
+import static com.paddyseedexpert.userprofile.constant.AppConstants.AUTH_ACCESS_TOKEN;
+import static com.paddyseedexpert.userprofile.constant.AppConstants.CREATE_ACCESS_TOKEN;
+import static com.paddyseedexpert.userprofile.constant.AppConstants.DELETE_ACCESS_TOKEN;
+import static com.paddyseedexpert.userprofile.constant.AppConstants.ERROR;
+import static com.paddyseedexpert.userprofile.constant.AppConstants.FETCH_ACCESS_TOKEN;
+import static com.paddyseedexpert.userprofile.constant.AppConstants.RESET_ACCESS_TOKEN;
+import static com.paddyseedexpert.userprofile.constant.AppConstants.RESET_PASSWORD_COLUMN_NAME;
+import static com.paddyseedexpert.userprofile.constant.AppConstants.RETRIEVE_ACCESS_TOKEN;
+import static com.paddyseedexpert.userprofile.constant.AppConstants.TABLE_NAME;
+import static com.paddyseedexpert.userprofile.constant.AppConstants.UPDATE_ACCESS_TOKEN;
+import static com.paddyseedexpert.utils.AuthenticationUtils.encrypt;
+import static com.paddyseedexpert.utils.AuthenticationUtils.decrypt;
+import static com.paddyseedexpert.utils.DataUtils.getJSONString;
+import static com.paddyseedexpert.utils.DataUtils.getMailerErrorMessage;
+import static com.paddyseedexpert.utils.DataUtils.isBlank;
+import static com.paddyseedexpert.utils.DataUtils.stringToJSON;
+import static com.paddyseedexpert.utils.MailUtils.sendForgotPasswordMail;
+import static com.paddyseedexpert.utils.MailUtils.sendForgotUsernameMail;
+import static com.paddyseedexpert.utils.MailUtils.sendResetPasswordMail;
+import static org.springframework.util.StringUtils.hasText;
+
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
-import java.security.spec.InvalidKeySpecException;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -11,10 +30,9 @@ import javax.crypto.BadPaddingException;
 import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
@@ -25,40 +43,25 @@ import com.paddyseedexpert.userprofile.exception.InvalidAccessTokenException;
 import com.paddyseedexpert.userprofile.exception.InvalidRequestParamException;
 import com.paddyseedexpert.userprofile.exception.MailSendException;
 import com.paddyseedexpert.userprofile.exception.MissingRequestParamException;
+import com.paddyseedexpert.userprofile.exception.MissingUserDetailsException;
 import com.paddyseedexpert.userprofile.exception.PasswordDecryptionException;
 import com.paddyseedexpert.userprofile.exception.PasswordEncryptionException;
 import com.paddyseedexpert.userprofile.exception.PasswordMismatchException;
 import com.paddyseedexpert.userprofile.exception.UserExistException;
 import com.paddyseedexpert.userprofile.exception.UserNotExistException;
+import com.paddyseedexpert.userprofile.exception.UserSecurityException;
 import com.paddyseedexpert.userprofile.model.User;
 import com.paddyseedexpert.userprofile.repository.UserRepository;
-
-import static com.paddyseedexpert.userprofile.constant.AppConstants.CREATE_ACCESS_TOKEN;
-import static com.paddyseedexpert.userprofile.constant.AppConstants.UPDATE_ACCESS_TOKEN;
-import static com.paddyseedexpert.userprofile.constant.AppConstants.FETCH_ACCESS_TOKEN;
-import static com.paddyseedexpert.userprofile.constant.AppConstants.DELETE_ACCESS_TOKEN;
-import static com.paddyseedexpert.userprofile.constant.AppConstants.AUTH_ACCESS_TOKEN;
-import static com.paddyseedexpert.userprofile.constant.AppConstants.RESET_ACCESS_TOKEN;
-import static com.paddyseedexpert.userprofile.constant.AppConstants.RETRIEVE_ACCESS_TOKEN;
-import static com.paddyseedexpert.utils.AuthenticationUtils.encrypt;
-import static com.paddyseedexpert.utils.AuthenticationUtils.decrypt;
-
-import static com.paddyseedexpert.userprofile.constant.AppConstants.ERROR;
-import static com.paddyseedexpert.utils.DataUtils.getJSONString;
-import static com.paddyseedexpert.utils.DataUtils.isBlank;
-import static com.paddyseedexpert.utils.DataUtils.stringToJSON;
-import static com.paddyseedexpert.utils.DataUtils.getMailerErrorMessage;
-import static com.paddyseedexpert.utils.MailUtils.sendResetPasswordMail;
-import static com.paddyseedexpert.utils.MailUtils.sendForgotPasswordMail;
-import static com.paddyseedexpert.utils.MailUtils.sendForgotUsernameMail;
 
 @Service
 public class UserServiceImpl implements UserService {
 
-	@Autowired
 	private UserRepository userRepository;
 	
-	private final Logger LOGGER = LoggerFactory.getLogger(UserServiceImpl.class);
+	@Autowired
+	public UserServiceImpl(final UserRepository userRepository) {
+		this.userRepository = userRepository;
+	}
 	
 	@Override
 	public String createUser(User user, String accessToken) throws RuntimeException {
@@ -67,6 +70,8 @@ public class UserServiceImpl implements UserService {
 		String password = user.getPassword();
 		String confirmPassword = user.getConfirmPassword();
 		String userName = user.getUserName();
+		String secureQuestion = user.getSecureQuestion();
+		String secureAnswer = user.getSecureAnswer();
 		Long emailCount = userRepository.countByEmailAddress(emailAddress);
 		Long userCount = userRepository.countByUserName(userName);
 		
@@ -86,11 +91,25 @@ public class UserServiceImpl implements UserService {
 			throw new AlreadyRegisteredException("Email id, "+emailAddress+" is already registered");
 		}
 		
+		if(!hasText(emailAddress) || !hasText(password) || !hasText(confirmPassword) || !hasText(userName)) {
+			throw new MissingUserDetailsException("User details missing in request payload");
+		}
+		
 		if(!password.equals(confirmPassword)) {
 			throw new PasswordMismatchException("Password and Confirm passwords given don't match");
 		}
 		
+		if(!hasText(secureQuestion) || !hasText(secureAnswer)) {
+			throw new UserSecurityException("Secure question/answer not set");
+		}
+		
+		user.setResetPassword(getResetPassword());
+		
 		return userRepository.save(user).getId().toString();
+	}
+
+	private String getResetPassword() {
+		return userRepository.GenerateUniqueValue(TABLE_NAME, RESET_PASSWORD_COLUMN_NAME);
 	}
 
 	@Override
@@ -219,15 +238,10 @@ public class UserServiceImpl implements UserService {
 			throw new InvalidRequestParamException("Username (or) Password request parameter specfied is blank (or) has only whitespace");
 		}
 		
-		Optional<User> optionalUser = userRepository.findByUserName(userName);
+		Optional<User> optionalUser = userRepository.findByUserNameAndPassword(userName, password);
 		
 		if(optionalUser.isPresent()){
-			User fetchedUser = optionalUser.get();
-			if(fetchedUser.getPassword().equals(user.getPassword())){
-				return fetchedUser.getId().toString();
-			}else{
-				throw new AuthenticationFailureException("Username (or) Password specified is invalid");
-			}
+			return optionalUser.get().getId().toString();
 		}else{
 			throw new AuthenticationFailureException("Username (or) Password specified is invalid");
 		}
@@ -265,7 +279,7 @@ public class UserServiceImpl implements UserService {
 	}
 
 	@Override
-	public String resetPassword(User user, String accessToken) throws RuntimeException, JsonMappingException, JsonProcessingException {
+	public String resetPasswordRest(User user, String accessToken) throws RuntimeException, JsonMappingException, JsonProcessingException {
 		
 		UUID id = user.getId();
 		String userName = user.getUserName();
@@ -280,7 +294,7 @@ public class UserServiceImpl implements UserService {
 		}
 		
 		if(id == null) {
-			throw new MissingRequestParamException("Id missing in request parameter for get operation");
+			throw new MissingRequestParamException("Id missing in request parameter for reset operation");
 		}
 		
 		if(isBlank(id.toString())) {
@@ -295,57 +309,30 @@ public class UserServiceImpl implements UserService {
 			throw new InvalidRequestParamException("Username (or) Password request parameter specfied is blank (or) has only whitespace");
 		}
 		
-		try {
-			password = encrypt(password);
-		} catch (InvalidKeyException | NoSuchAlgorithmException | InvalidKeySpecException | NoSuchPaddingException | InvalidAlgorithmParameterException | IllegalBlockSizeException | BadPaddingException e) {
-			String errorMessage = "Error occurred in encrypting password";
-			LOGGER.error(errorMessage, e);
-			throw new PasswordEncryptionException(errorMessage);
-		}
-		
 		Optional<User> optionalUser = userRepository.findByIdAndUserNameAndPassword(id, userName, password);
 		
 		if(optionalUser.isPresent()) {
 			user = optionalUser.get();
-			String resetPassword = user.getResetPassword();
-			String encryptedPassword = "";
-			
-			try {
-				encryptedPassword = encrypt(resetPassword);
-			} catch (InvalidKeyException | NoSuchAlgorithmException | InvalidKeySpecException | NoSuchPaddingException | InvalidAlgorithmParameterException | IllegalBlockSizeException | BadPaddingException e) {
-				String errorMessage = "Error occurred in encrypting password";
-				LOGGER.error(errorMessage, e);
-				throw new PasswordEncryptionException(errorMessage);
-			}
-			
-			String mailResponse = sendResetPasswordMail(user.getEmailAddress(), resetPassword);
+			String mailResponse = sendResetPasswordMail(user.getEmailAddress(), user.getUserName(), user.getResetPassword());
 			JsonNode response = stringToJSON(mailResponse);
 			
 			if(!mailResponse.contains(ERROR)) {
-				user.setPassword(encryptedPassword);
-				user.setConfirmPassword(encryptedPassword);
-				
-				userRepository.save(user);
-				
 				return "Password reset successful...";
-				
 			} else {
 				throw new MailSendException(getMailerErrorMessage(response));
 			}
 			
-			
 		}else {
-			throw new AuthenticationFailureException("Couldn't fetch User with given Username and Password");
+			throw new AuthenticationFailureException("Username (or) Password specified is invalid");
 		}
 		
 	}
 
 	@Override
-	public String forgotUsernameOrPassword(User user, String accessToken) throws RuntimeException, JsonMappingException, JsonProcessingException {
+	public String forgotUsernameOrPasswordRest(User user, String accessToken) throws RuntimeException, JsonMappingException, JsonProcessingException {
 		
-		UUID id = user.getId();
+		String emailAddress = user.getEmailAddress();
 		String userName = user.getUserName();
-		String password = user.getPassword();
 		
 		if(accessToken==null) {
 			throw new InvalidAccessTokenException("Check access token missing in request header");
@@ -355,12 +342,12 @@ public class UserServiceImpl implements UserService {
 			throw new InvalidAccessTokenException("Invalid retrieve access token entered");
 		}
 		
-		if(id == null) {
-			throw new MissingRequestParamException("Id missing in request parameter for retrieve operation");
+		if(userName == null && emailAddress == null) {
+			throw new MissingRequestParamException("Username (or) Email address missing in request payload for retrieve operation");
 		}
 		
-		if(userName == null || isBlank(userName)) {
-			Optional<User> optionalUser = userRepository.findById(id);
+		if(emailAddress != null && !isBlank(emailAddress)) {
+			Optional<User> optionalUser = userRepository.findByEmailAddress(emailAddress);
 			
 			if(optionalUser.isPresent()) {
 				
@@ -371,54 +358,81 @@ public class UserServiceImpl implements UserService {
 				JsonNode response = stringToJSON(mailResponse);
 				
 				if(!mailResponse.contains(ERROR)) {
-					
 					return "Username retrieval successful...";
-					
 				} else {
 					throw new MailSendException(getMailerErrorMessage(response));
 				}
 				
 			}else {
-				throw new UserNotExistException("Couldn't fetch user for the id, "+id.toString());
+				throw new UserNotExistException("Couldn't fetch user for the email address, "+emailAddress);
 			}
 			
-		} else if(password == null || isBlank(password)) {
+		} else if(userName != null && !isBlank(userName)) {
 
-			Optional<User> optionalUser = userRepository.findByIdAndUserName(id, userName);
+			Optional<User> optionalUser = userRepository.findByUserName(userName);
 			
 			if(optionalUser.isPresent()) {
 				
 				user = optionalUser.get();
-				password = user.getPassword();
-				
-				try {
-					password = decrypt(password);
-				} catch (InvalidKeyException | NoSuchAlgorithmException | InvalidKeySpecException | NoSuchPaddingException | InvalidAlgorithmParameterException | IllegalBlockSizeException | BadPaddingException e) {
-					String errorMessage = "Error occurred in decrypting password";
-					LOGGER.error(errorMessage, e);
-					throw new PasswordDecryptionException(errorMessage);
-				}
-				
-				String mailResponse = sendForgotPasswordMail(user.getEmailAddress(), userName, password);
+				String mailResponse = sendForgotPasswordMail(user.getEmailAddress(), userName, user.getResetPassword());
 				
 				JsonNode response = stringToJSON(mailResponse);
 				
 				if(!mailResponse.contains(ERROR)) {
-					
 					return "Password retrieval successful...";
-					
 				} else {
 					throw new MailSendException(getMailerErrorMessage(response));
 				}
 				
 			}else {
-				throw new UserNotExistException("Couldn't fetch user for the id, "+id.toString());
+				throw new UserNotExistException("Couldn't fetch user for the username, "+userName);
 			}
 			
 		}else {
-			return "";
+			throw new InvalidRequestParamException("Username (or) Email address in request payload is blank (or) has only whitepace");
 		}
 		
+	}
+
+	@Override
+	public User forgotPasswordWeb(String userName, String resetPassword) throws RuntimeException{
+		Optional<User> user = userRepository.findByUserNameAndResetPassword(userName, resetPassword);
+		return user.orElseThrow(UserNotExistException::new);
+	}
+
+	@Transactional
+	@Override
+	public int updatePassword(UUID userId, String password, String confirmPassword) throws PasswordEncryptionException {
+		String encryptedPassword="";
+		String encryptedConfirmPassword=""; 
+		try {
+			encryptedPassword = encrypt(password);
+			encryptedConfirmPassword = encrypt(confirmPassword);
+		} catch(IllegalBlockSizeException | BadPaddingException | NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException e) {
+			throw new PasswordEncryptionException("Error in crypting password "+e.getMessage());
+		}
+		
+		User user = userRepository.findById(userId).orElseThrow(UserNotExistException::new);
+		user.setPassword(encryptedPassword);
+		user.setConfirmPassword(encryptedConfirmPassword);
+		user.setResetPassword(getResetPassword());
+		userRepository.save(user);
+		
+		return +1;
+	}
+
+	@Override
+	public User resetPasswordWeb(String userName, String resetPassword) throws RuntimeException {
+		
+		Optional<User> optionalUser = userRepository.findByUserNameAndResetPassword(userName, resetPassword);
+		User user = optionalUser.orElseThrow(UserNotExistException::new);
+		try {
+			user.setPassword(decrypt(user.getPassword()));
+		} catch (InvalidKeyException | IllegalBlockSizeException | BadPaddingException | NoSuchAlgorithmException | NoSuchPaddingException e) {
+			throw new PasswordDecryptionException(e.getMessage());
+		}
+		
+		return user;
 	}	
 
 }

@@ -15,7 +15,7 @@ jobs:
       - name: Build & Push to DockerHub
         uses: mr-smithers-excellent/docker-build-push@v2
         with:
-          image: 2467027/user-profile
+          image: 2467027/user-management
           tag: ${GITHUB_REF##*/}
           registry: docker.io
           dockerfile: Dockerfile
